@@ -4,17 +4,18 @@ const statusEl = document.getElementById("status");
 const newGameBtn = document.getElementById("newGameBtn");
 const themeSelect = document.getElementById("themeSelect");
 
+let gameId = localStorage.getItem("gameId") || null;
+
 let size = 10;
-let phase = "idle"; // idle | placement | battle
+let state = "IDLE"; // PLACING | PLAYER_TURN | GAME_OVER | IDLE
 let playerGrid = null;
 let playerShots = null;
 let cpuShots = null;
 
 // placement state
-let shipsToPlace = [];     // e.g. [5,3,2]
-let placedShips = [];      // {r,c,len,dir}
-// Placement direction removed: ships always place horizontally.
-const PLACE_DIR = 0;
+let shipsToPlace = [];
+let placedShips = [];
+let placeDir = 0; // 0 horiz, 1 vert
 
 function setStatus(msg) {
   statusEl.textContent = msg;
@@ -32,7 +33,6 @@ function inBounds(r, c) {
   return r >= 0 && r < size && c >= 0 && c < size;
 }
 
-// local validation mirrors server rules (server is source of truth)
 function canPlaceLocal(grid, r, c, len, dir) {
   if (!inBounds(r, c)) return false;
   if (dir !== 0 && dir !== 1) return false;
@@ -45,7 +45,6 @@ function canPlaceLocal(grid, r, c, len, dir) {
     for (let i = 0; i < len; i++) if (grid[r + i][c] !== 0) return false;
   }
 
-  // "no-touch" rule (incl diagonals)
   const r2 = dir ? (r + len - 1) : r;
   const c2 = dir ? c : (c + len - 1);
 
@@ -70,9 +69,9 @@ function renderBoards() {
   playerBoardEl.innerHTML = "";
   cpuBoardEl.innerHTML = "";
 
-  // Make it visually obvious which board is currently clickable.
-  playerBoardEl.classList.toggle("clickable", phase === "placement");
-  cpuBoardEl.classList.toggle("clickable", phase === "battle");
+  // Important: your CSS uses .board.clickable .cell
+  playerBoardEl.classList.toggle("clickable", state === "PLACING");
+  cpuBoardEl.classList.toggle("clickable", state === "PLAYER_TURN");
 
   playerBoardEl.style.gridTemplateColumns = `repeat(${size}, 1fr)`;
   cpuBoardEl.style.gridTemplateColumns = `repeat(${size}, 1fr)`;
@@ -88,7 +87,7 @@ function renderBoards() {
         if (cpuShots[r][c] === 2) p.classList.add("hit");
       }
 
-      if (phase === "placement") {
+      if (state === "PLACING") {
         p.addEventListener("click", () => onPlayerCellClick(r, c));
       }
 
@@ -105,7 +104,7 @@ function renderBoards() {
         e.classList.add("unknown");
       }
 
-      if (phase === "battle") {
+      if (state === "PLAYER_TURN") {
         e.addEventListener("click", () => onEnemyCellClick(r, c));
       }
 
@@ -115,58 +114,110 @@ function renderBoards() {
 }
 
 function updatePlacementStatus() {
-  if (phase !== "placement") return;
+  if (state !== "PLACING") return;
   const nextLen = shipsToPlace[placedShips.length];
   if (nextLen == null) return;
-  setStatus(`Place ship length ${nextLen} (${placedShips.length + 1}/${shipsToPlace.length}) by clicking your board.`);
+
+  const dirLabel = placeDir === 0 ? "HORIZONTAL" : "VERTICAL";
+  setStatus(`Place ship length ${nextLen} (${placedShips.length + 1}/${shipsToPlace.length}). Press R to rotate (${dirLabel}).`);
+}
+
+function applyServerState(data) {
+  if (data.gameId) {
+    gameId = data.gameId;
+    localStorage.setItem("gameId", gameId);
+  }
+  size = data.size ?? size;
+  state = data.state ?? state;
+
+  shipsToPlace = Array.isArray(data.shipsToPlace) ? data.shipsToPlace : shipsToPlace;
+  playerGrid = data.playerGrid ?? playerGrid;
+  playerShots = data.playerShots ?? playerShots;
+  cpuShots = data.cpuShots ?? cpuShots;
+
+  renderBoards();
+  if (data.status) setStatus(data.status);
+  if (state === "PLACING") updatePlacementStatus();
+}
+
+async function resumeGame() {
+  if (!gameId) return false;
+
+  try {
+    const res = await fetch("api_state.php", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ gameId })
+    });
+
+    const text = await res.text();
+    const data = JSON.parse(text);
+
+    if (!data.ok) return false;
+
+    // IMPORTANT: on resume, we don't know partial placements; start fresh placement client-side.
+    if (data.state === "PLACING") {
+      placedShips = [];
+      placeDir = 0;
+    }
+
+    applyServerState(data);
+    newGameBtn.textContent = "Restart Game";
+    return true;
+  } catch (err) {
+    console.error("resumeGame failed", err);
+    return false;
+  }
 }
 
 async function startGame() {
-  const res = await fetch("api_start.php", { method: "POST" });
-  const data = await res.json();
+  try {
+    const res = await fetch("api_start.php", { method: "POST" });
 
-  if (!data.ok) {
-    setStatus(data.error || "Failed to start game");
-    return;
+    // Read as text first so we can debug non-JSON PHP errors
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      setStatus("Server did not return JSON. Open api_start.php directly to see the error.");
+      console.error("Non-JSON response:", text);
+      return;
+    }
+
+    if (!data.ok) {
+      setStatus(data.error || "Failed to start game");
+      console.error("api_start ok:false", data);
+      return;
+    }
+
+    placedShips = [];
+    placeDir = 0;
+
+    applyServerState(data);
+    newGameBtn.textContent = "Restart Game";
+  } catch (err) {
+    setStatus("Network / server error. Check console + that PHP server is running.");
+    console.error(err);
   }
-
-  size = data.size;
-  phase = data.phase || "battle";
-  playerGrid = data.playerGrid;
-  playerShots = data.playerShots;
-  cpuShots = data.cpuShots;
-
-  shipsToPlace = Array.isArray(data.shipsToPlace) ? data.shipsToPlace : [];
-  placedShips = [];
-
-  renderBoards();
-  setStatus(data.status);
-
-  if (phase === "placement") updatePlacementStatus();
-
-  newGameBtn.textContent = "Restart Game";
-}
-
-function isGameOverMessage(msg) {
-  const m = msg.toLowerCase();
-  return m.includes("you win") || m.includes("computer wins") || m.includes("game is over");
 }
 
 async function onPlayerCellClick(r, c) {
-  if (phase !== "placement") return;
+  if (state !== "PLACING") return;
 
   const len = shipsToPlace[placedShips.length];
   if (len == null) return;
 
   const gridCopy = playerGrid.map(row => row.slice());
-  if (!canPlaceLocal(gridCopy, r, c, len, PLACE_DIR)) {
-    setStatus("Invalid placement (overlap/out of bounds/adjacent). Try another spot.");
+
+  if (!canPlaceLocal(gridCopy, r, c, len, placeDir)) {
+    setStatus("Invalid placement (overlap/out of bounds/adjacent). Try another spot. Press R to rotate.");
     return;
   }
 
-  placeShipLocal(gridCopy, r, c, len, PLACE_DIR);
+  placeShipLocal(gridCopy, r, c, len, placeDir);
   playerGrid = gridCopy;
-  placedShips.push({ r, c, len, dir: PLACE_DIR });
+  placedShips.push({ r, c, len, dir: placeDir });
 
   renderBoards();
 
@@ -175,9 +226,11 @@ async function onPlayerCellClick(r, c) {
       const res = await fetch("api_place.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ships: placedShips })
+        body: JSON.stringify({ gameId, ships: placedShips })
       });
-      const data = await res.json();
+
+      const text = await res.text();
+      const data = JSON.parse(text);
 
       if (!data.ok) {
         setStatus((data.error || "Server rejected placement") + " Restarting…");
@@ -185,16 +238,11 @@ async function onPlayerCellClick(r, c) {
         return;
       }
 
-      phase = "battle";
-      playerGrid = data.playerGrid;
-      playerShots = data.playerShots;
-      cpuShots = data.cpuShots;
-
-      renderBoards();
-      setStatus(data.status);
+      applyServerState(data);
       return;
-    } catch (e) {
+    } catch (err) {
       setStatus("Network error while submitting placement.");
+      console.error(err);
       return;
     }
   }
@@ -203,20 +251,8 @@ async function onPlayerCellClick(r, c) {
 }
 
 async function onEnemyCellClick(r, c) {
-  if (!playerShots) {
-    setStatus("Press “Restart Game” to begin.");
-    return;
-  }
-
-  if (phase !== "battle") {
-    setStatus("Place your fleet first.");
-    return;
-  }
-
-  if (isGameOverMessage(statusEl.textContent)) {
-    setStatus("Game finished. Press “Restart Game” to play again.");
-    return;
-  }
+  if (state !== "PLAYER_TURN") return;
+  if (!playerShots) return;
 
   if (playerShots[r][c] !== 0) {
     setStatus("You already shot there.");
@@ -227,32 +263,34 @@ async function onEnemyCellClick(r, c) {
     const res = await fetch("api_shot.php", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ r, c })
+      body: JSON.stringify({ gameId, r, c })
     });
-    const data = await res.json();
+
+    const text = await res.text();
+    const data = JSON.parse(text);
 
     if (!data.ok) {
       setStatus(data.error || "Shot failed");
       return;
     }
 
-    playerShots = data.playerShots;
-    cpuShots = data.cpuShots;
-    playerGrid = data.playerGrid;
-
-    renderBoards();
-    setStatus(data.status);
-
-    if (isGameOverMessage(data.status)) {
-      newGameBtn.textContent = "Restart Game";
-      newGameBtn.focus();
-    }
-  } catch (e) {
-    setStatus("Network error (is Apache running?)");
+    applyServerState(data);
+  } catch (err) {
+    setStatus("Network error.");
+    console.error(err);
   }
 }
 
-// Theme picker
+// Rotate with R during placement
+window.addEventListener("keydown", (e) => {
+  if (state !== "PLACING") return;
+  if (e.key.toLowerCase() === "r") {
+    placeDir = placeDir === 0 ? 1 : 0;
+    updatePlacementStatus();
+  }
+});
+
+// Theme picker (unchanged)
 themeSelect.addEventListener("change", () => {
   const t = themeSelect.value;
   const url = new URL(window.location.href);
@@ -262,5 +300,9 @@ themeSelect.addEventListener("change", () => {
 
 newGameBtn.addEventListener("click", startGame);
 
-// initial paint
-renderBoards();
+// Init
+(async function init() {
+  renderBoards();
+  setStatus("Press “Restart Game” to begin.");
+  await resumeGame();
+})();

@@ -1,64 +1,63 @@
 <?php
-session_start();
 header("Content-Type: application/json");
+require_once __DIR__ . '/db.php';
 
 const SIZE = 10;
 
-// ships: length => count  (exactly 3 ships total)
+// ships: length => count
 $ships = [
   5 => 1,
   3 => 1,
   2 => 1
 ];
 
-function emptyGrid() {
+function emptyGrid(): array {
   $g = [];
-  for ($r=0; $r<SIZE; $r++) $g[] = array_fill(0, SIZE, 0);
+  for ($r = 0; $r < SIZE; $r++) $g[] = array_fill(0, SIZE, 0);
   return $g;
 }
 
-function emptyShots() {
+function emptyShots(): array {
   $s = [];
-  for ($r=0; $r<SIZE; $r++) $s[] = array_fill(0, SIZE, 0); // 0 unknown, 1 miss, 2 hit
+  for ($r = 0; $r < SIZE; $r++) $s[] = array_fill(0, SIZE, 0); // 0 unknown, 1 miss, 2 hit
   return $s;
 }
 
-function canPlace(&$grid, $r, $c, $len, $dir) {
-  // dir: 0 horiz, 1 vert
+function canPlace(array &$grid, int $r, int $c, int $len, int $dir): bool {
   if ($dir === 0) {
     if ($c + $len > SIZE) return false;
-    for ($i=0; $i<$len; $i++) if ($grid[$r][$c+$i] !== 0) return false;
+    for ($i = 0; $i < $len; $i++) if ($grid[$r][$c + $i] !== 0) return false;
   } else {
     if ($r + $len > SIZE) return false;
-    for ($i=0; $i<$len; $i++) if ($grid[$r+$i][$c] !== 0) return false;
+    for ($i = 0; $i < $len; $i++) if ($grid[$r + $i][$c] !== 0) return false;
   }
 
-  // "no-touch" rule (including diagonals)
-  for ($rr=max(0,$r-1); $rr<=min(SIZE-1,$r+($dir? $len:1)); $rr++) {
-    for ($cc=max(0,$c-1); $cc<=min(SIZE-1,$c+($dir?1:$len)); $cc++) {
+  // no-touch rule (incl diagonals)
+  for ($rr = max(0, $r - 1); $rr <= min(SIZE - 1, $r + ($dir ? $len : 1)); $rr++) {
+    for ($cc = max(0, $c - 1); $cc <= min(SIZE - 1, $c + ($dir ? 1 : $len)); $cc++) {
       if ($grid[$rr][$cc] === 1) return false;
     }
   }
   return true;
 }
 
-function placeShip(&$grid, $r, $c, $len, $dir) {
-  if ($dir === 0) for ($i=0; $i<$len; $i++) $grid[$r][$c+$i] = 1;
-  else           for ($i=0; $i<$len; $i++) $grid[$r+$i][$c] = 1;
+function placeShip(array &$grid, int $r, int $c, int $len, int $dir): void {
+  if ($dir === 0) for ($i = 0; $i < $len; $i++) $grid[$r][$c + $i] = 1;
+  else           for ($i = 0; $i < $len; $i++) $grid[$r + $i][$c] = 1;
 }
 
-function randomPlaceAllShips(&$grid, $ships) {
+function randomPlaceAllShips(array &$grid, array $ships): void {
   foreach ($ships as $len => $count) {
-    for ($n=0; $n<$count; $n++) {
+    for ($n = 0; $n < $count; $n++) {
       $tries = 0;
       while (true) {
         $tries++;
         if ($tries > 5000) throw new Exception("Could not place ships (too many tries)");
-        $dir = random_int(0,1);
-        $r = random_int(0, SIZE-1);
-        $c = random_int(0, SIZE-1);
-        if (canPlace($grid, $r, $c, $len, $dir)) {
-          placeShip($grid, $r, $c, $len, $dir);
+        $dir = random_int(0, 1);
+        $r = random_int(0, SIZE - 1);
+        $c = random_int(0, SIZE - 1);
+        if (canPlace($grid, $r, $c, (int)$len, $dir)) {
+          placeShip($grid, $r, $c, (int)$len, $dir);
           break;
         }
       }
@@ -66,54 +65,62 @@ function randomPlaceAllShips(&$grid, $ships) {
   }
 }
 
-function countShipCells($grid) {
+function countShipCells(array $grid): int {
   $cells = 0;
-  for ($r=0; $r<SIZE; $r++) for ($c=0; $c<SIZE; $c++) if ($grid[$r][$c] === 1) $cells++;
+  for ($r = 0; $r < SIZE; $r++) for ($c = 0; $c < SIZE; $c++) if ($grid[$r][$c] === 1) $cells++;
   return $cells;
 }
 
-function shipsList($ships) {
+function shipsList(array $ships): array {
   $out = [];
-  foreach ($ships as $len => $count) for ($i=0; $i<$count; $i++) $out[] = (int)$len;
-  rsort($out); // place big ships first for nicer UX
+  foreach ($ships as $len => $count) for ($i = 0; $i < $count; $i++) $out[] = (int)$len;
+  rsort($out);
   return $out;
 }
 
 try {
-  $playerGrid = emptyGrid(); // EMPTY now
-  $cpuGrid    = emptyGrid();
+  $playerGrid = emptyGrid(); // empty until placed
+  $cpuGrid = emptyGrid();
   randomPlaceAllShips($cpuGrid, $ships);
 
-  $_SESSION["game"] = [
-    "phase" => "placement",
+  $gameId = bs_new_game_id();
 
-    "playerGrid" => $playerGrid,
-    "cpuGrid"    => $cpuGrid,
+  $game = [
+    'size' => SIZE,
+    'state' => 'PLACING',
 
-    "playerShots" => emptyShots(),
-    "cpuShots"    => emptyShots(),
+    'playerGrid' => $playerGrid,
+    'cpuGrid' => $cpuGrid,
 
-    "playerHits" => 0,
-    "cpuHits"    => 0,
-    "totalShipCells" => countShipCells($cpuGrid),
+    'playerShots' => emptyShots(),
+    'cpuShots' => emptyShots(),
 
-    "turn" => "placement",
-    "aiTargets" => [],
+    'playerHits' => 0,
+    'cpuHits' => 0,
+    'totalShipCells' => countShipCells($cpuGrid),
 
-    "shipsToPlace" => shipsList($ships),
+    'aiTargets' => [],
+    'shipsToPlace' => shipsList($ships),
   ];
 
+  bs_save_game($gameId, 'PLACING', $game);
+
+// PHP < 7.3 compatible cookie
+setcookie('game_id', $gameId, time() + 60 * 60 * 24 * 30, "/");
+
+
   echo json_encode([
-    "ok" => true,
-    "size" => SIZE,
-    "phase" => "placement",
-    "shipsToPlace" => $_SESSION["game"]["shipsToPlace"],
-    "playerGrid" => $playerGrid,
-    "playerShots" => $_SESSION["game"]["playerShots"],
-    "cpuShots" => $_SESSION["game"]["cpuShots"],
-    "status" => "Place your fleet: click on your board to place ships. Press R to rotate."
+    'ok' => true,
+    'gameId' => $gameId,
+    'size' => SIZE,
+    'state' => 'PLACING',
+    'shipsToPlace' => $game['shipsToPlace'],
+    'playerGrid' => $playerGrid,
+    'playerShots' => $game['playerShots'],
+    'cpuShots' => $game['cpuShots'],
+    'status' => 'Place your fleet: click on your board to place ships. Press R to rotate.'
   ]);
-} catch (Exception $e) {
+} catch (Throwable $e) {
   http_response_code(500);
-  echo json_encode(["ok" => false, "error" => $e->getMessage()]);
+  echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
 }
