@@ -7,3 +7,7 @@ My first iteratition was the player picking the ship placement and validation. P
 The second iteration is persistent storage with SQLite this was so that the game would save the game state if it is refreshed. 
 
 Some limitations are that if all ships are not placed and the browser is reset it will restart the entire placement phase. The AI opponent is very simple and does not use much startegy when playing the game.
+
+To run this game you need to place the BattleshipV2 folder in your XAMPP using the path /Applications/XAMPP/xamppfiles/htdocs/BattleshipV2/
+
+Then run XAMPP and access the game using the URL http://localhost/BattleshipV2/
