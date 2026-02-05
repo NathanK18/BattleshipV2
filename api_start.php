@@ -13,19 +13,13 @@ $ships = [
 
 function emptyGrid() {
   $g = [];
-  for ($r=0; $r<SIZE; $r++) {
-    $row = array_fill(0, SIZE, 0); // 0 empty, 1 ship
-    $g[] = $row;
-  }
+  for ($r=0; $r<SIZE; $r++) $g[] = array_fill(0, SIZE, 0);
   return $g;
 }
 
 function emptyShots() {
   $s = [];
-  for ($r=0; $r<SIZE; $r++) {
-    $row = array_fill(0, SIZE, 0); // 0 unknown, 1 miss, 2 hit
-    $s[] = $row;
-  }
+  for ($r=0; $r<SIZE; $r++) $s[] = array_fill(0, SIZE, 0); // 0 unknown, 1 miss, 2 hit
   return $s;
 }
 
@@ -45,16 +39,12 @@ function canPlace(&$grid, $r, $c, $len, $dir) {
       if ($grid[$rr][$cc] === 1) return false;
     }
   }
-
   return true;
 }
 
 function placeShip(&$grid, $r, $c, $len, $dir) {
-  if ($dir === 0) {
-    for ($i=0; $i<$len; $i++) $grid[$r][$c+$i] = 1;
-  } else {
-    for ($i=0; $i<$len; $i++) $grid[$r+$i][$c] = 1;
-  }
+  if ($dir === 0) for ($i=0; $i<$len; $i++) $grid[$r][$c+$i] = 1;
+  else           for ($i=0; $i<$len; $i++) $grid[$r+$i][$c] = 1;
 }
 
 function randomPlaceAllShips(&$grid, $ships) {
@@ -82,36 +72,46 @@ function countShipCells($grid) {
   return $cells;
 }
 
-try {
-  $playerGrid = emptyGrid();
-  $cpuGrid    = emptyGrid();
+function shipsList($ships) {
+  $out = [];
+  foreach ($ships as $len => $count) for ($i=0; $i<$count; $i++) $out[] = (int)$len;
+  rsort($out); // place big ships first for nicer UX
+  return $out;
+}
 
-  randomPlaceAllShips($playerGrid, $ships);
+try {
+  $playerGrid = emptyGrid(); // EMPTY now
+  $cpuGrid    = emptyGrid();
   randomPlaceAllShips($cpuGrid, $ships);
 
   $_SESSION["game"] = [
+    "phase" => "placement",
+
     "playerGrid" => $playerGrid,
     "cpuGrid"    => $cpuGrid,
 
-    "playerShots" => emptyShots(), // shots fired at CPU
-    "cpuShots"    => emptyShots(), // shots fired at player
+    "playerShots" => emptyShots(),
+    "cpuShots"    => emptyShots(),
 
     "playerHits" => 0,
     "cpuHits"    => 0,
     "totalShipCells" => countShipCells($cpuGrid),
-    "turn" => "player",
 
-    // simple AI memory
+    "turn" => "placement",
     "aiTargets" => [],
+
+    "shipsToPlace" => shipsList($ships),
   ];
 
   echo json_encode([
     "ok" => true,
     "size" => SIZE,
-    "playerGrid" => $playerGrid, // safe to show own ships
+    "phase" => "placement",
+    "shipsToPlace" => $_SESSION["game"]["shipsToPlace"],
+    "playerGrid" => $playerGrid,
     "playerShots" => $_SESSION["game"]["playerShots"],
     "cpuShots" => $_SESSION["game"]["cpuShots"],
-    "status" => "New game started. Fire on the enemy board!"
+    "status" => "Place your fleet: click on your board to place ships. Press R to rotate."
   ]);
 } catch (Exception $e) {
   http_response_code(500);

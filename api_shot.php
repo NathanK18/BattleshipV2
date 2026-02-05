@@ -39,6 +39,13 @@ if (!isset($_SESSION["game"])) {
 
 $game = $_SESSION["game"];
 
+// prevent shooting during placement
+if (($game["phase"] ?? "battle") !== "battle") {
+  http_response_code(409);
+  echo json_encode(["ok"=>false, "error"=>"Place your fleet first."]);
+  exit;
+}
+
 // NEW: prevent any moves after game ended
 if (($game["turn"] ?? "") === "over") {
   http_response_code(409);
