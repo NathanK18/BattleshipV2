@@ -11,3 +11,7 @@ Some limitations are that if all ships are not placed and the browser is reset i
 To run this game you need to place the BattleshipV2 folder in your XAMPP using the path /Applications/XAMPP/xamppfiles/htdocs/BattleshipV2/
 
 Then run XAMPP and access the game using the URL http://localhost/BattleshipV2/
+
+
+Here is the recording lin
+https://www.loom.com/share/8c5bd8edf20f4427a0ee72a2170d4571
