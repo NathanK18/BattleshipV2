@@ -1,32 +1,54 @@
 <?php
 // SQLite persistence helpers for Battleship.
+// Goal: "download and run" with minimal setup, even on XAMPP/macOS permission quirks.
 
 function bs_db(): PDO {
   static $pdo = null;
   if ($pdo instanceof PDO) return $pdo;
 
-  $dataDir = __DIR__ . DIRECTORY_SEPARATOR . 'data';
+  // Candidate data directories (first writable wins).
+  // 1) Project-local folder (nice if Apache can write there)
+  // 2) /tmp (best universal fallback for XAMPP/macOS)
+  // 3) XAMPP temp (often writable by daemon)
+  // 4) PHP system temp (may be per-user and not writable by Apache user)
+  $candidates = [
+    __DIR__ . DIRECTORY_SEPARATOR . 'data',
+    '/tmp/battleshipv2',
+    // Relative path from htdocs/<project>/db.php -> xamppfiles/temp
+    realpath(__DIR__ . '/../../temp') ? (realpath(__DIR__ . '/../../temp') . '/battleshipv2') : null,
+    '/Applications/XAMPP/xamppfiles/temp/battleshipv2',
+    sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'battleshipv2',
+  ];
 
-  if (!is_dir($dataDir)) {
-    // Suppress mkdir warnings so APIs still return valid JSON.
-    if (!@mkdir($dataDir, 0775, true) && !is_dir($dataDir)) {
-      $err = error_get_last();
-      $msg = $err ? $err['message'] : 'unknown error';
-      throw new Exception("Cannot create data directory: $dataDir ($msg)");
+  // Remove nulls
+  $candidates = array_values(array_filter($candidates, fn($x) => is_string($x) && $x !== ''));
+
+  $dataDir = null;
+
+  foreach ($candidates as $dir) {
+    // Try to create the directory if it doesn't exist (suppress warnings)
+    if (!is_dir($dir)) {
+      @mkdir($dir, 0775, true);
+    }
+
+    if (is_dir($dir) && is_writable($dir)) {
+      $dataDir = $dir;
+      break;
     }
   }
 
-  if (!is_writable($dataDir)) {
-    throw new Exception("Data directory is not writable by PHP: $dataDir");
+  if ($dataDir === null) {
+    throw new Exception("No writable data directory found. Tried: " . implode(", ", $candidates));
   }
 
   $path = $dataDir . DIRECTORY_SEPARATOR . 'battleship.db';
 
-  // This will throw a clean exception if SQLite driver isn't installed/enabled.
+  // Create/open the sqlite database
   $pdo = new PDO('sqlite:' . $path);
   $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
   $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
 
+  // Initialize schema
   $pdo->exec(
     "CREATE TABLE IF NOT EXISTS games (
       game_id TEXT PRIMARY KEY,
@@ -52,16 +74,21 @@ function bs_load_game(string $gameId): ?array {
   $game = json_decode($row['data'], true);
   if (!is_array($game)) return null;
 
+  // Ensure canonical state is present
   $game['state'] = $row['state'];
   return $game;
 }
 
 function bs_save_game(string $gameId, string $state, array $game): void {
   $game['state'] = $state;
+
   $json = json_encode($game);
-  if ($json === false) throw new Exception('Failed to encode game JSON');
+  if ($json === false) {
+    throw new Exception('Failed to encode game JSON');
+  }
 
   $now = time();
+
   $stmt = bs_db()->prepare(
     'INSERT INTO games(game_id, state, data, updated_at) VALUES(?,?,?,?)
      ON CONFLICT(game_id) DO UPDATE SET
@@ -79,5 +106,6 @@ function bs_get_game_id_from_request(array $input): ?string {
   if (isset($_COOKIE['game_id']) && is_string($_COOKIE['game_id']) && $_COOKIE['game_id'] !== '') {
     return $_COOKIE['game_id'];
   }
+
   return null;
 }
